@@ -39,6 +39,34 @@ function CodeBlock({ className, children }: ComponentPropsWithoutRef<"code">) {
   );
 }
 
+// Tailwind's preflight reset strips default browser styling from headings/lists (no bullet or
+// number markers, headings the same size as body text) -- without this, react-markdown's output
+// for anything beyond plain paragraphs/bold/code was rendering as visually flat, unstructured
+// text (a real gap caught by actually looking at a live screenshot, not just the unit tests,
+// which only assert text content, not layout/marker visibility).
+const MARKDOWN_COMPONENTS = {
+  code: CodeBlock,
+  p: (props: ComponentPropsWithoutRef<"p">) => <p className="mb-2 last:mb-0" {...props} />,
+  ul: (props: ComponentPropsWithoutRef<"ul">) => (
+    <ul className="mb-2 list-disc space-y-1 pl-5" {...props} />
+  ),
+  ol: (props: ComponentPropsWithoutRef<"ol">) => (
+    <ol className="mb-2 list-decimal space-y-1 pl-5" {...props} />
+  ),
+  h1: (props: ComponentPropsWithoutRef<"h1">) => (
+    <h1 className="mt-3 mb-1 text-base font-semibold first:mt-0" {...props} />
+  ),
+  h2: (props: ComponentPropsWithoutRef<"h2">) => (
+    <h2 className="mt-3 mb-1 text-base font-semibold first:mt-0" {...props} />
+  ),
+  h3: (props: ComponentPropsWithoutRef<"h3">) => (
+    <h3 className="mt-3 mb-1 text-sm font-semibold first:mt-0" {...props} />
+  ),
+  a: (props: ComponentPropsWithoutRef<"a">) => (
+    <a className="underline underline-offset-2 hover:text-foreground" {...props} />
+  ),
+};
+
 interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
@@ -53,10 +81,7 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
         isUser ? "ml-auto bg-primary/10" : "bg-muted/60",
       )}
     >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{ code: CodeBlock }}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
         {content}
       </ReactMarkdown>
     </div>

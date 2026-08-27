@@ -17,6 +17,12 @@ coding questions, running on consumer hardware (an RTX 3060), with zero ongoing 
 does the actual model serving; this project is the app built around it — persistence, streaming,
 a real Stop button, and a desktop shell.
 
+## Screenshots
+
+| New chat | A real conversation |
+| --- | --- |
+| ![New chat screen, dark mode](docs/screenshots/new-chat.png) | ![Conversation with syntax-highlighted code](docs/screenshots/conversation.png) |
+
 ## Architecture
 
 ```mermaid
