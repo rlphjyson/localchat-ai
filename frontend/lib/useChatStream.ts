@@ -2,12 +2,14 @@
 
 import { useCallback, useRef, useState } from "react";
 import { ApiError, buildSendMessageUrl } from "@/lib/api";
+import type { Effort } from "@/lib/effort";
 
 interface UseChatStreamResult {
   streamingText: string;
+  streamingThinking: string;
   isStreaming: boolean;
   error: string | null;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, effort?: Effort) => Promise<void>;
   stop: () => void;
 }
 
@@ -29,20 +31,24 @@ function parseSseFrame(frame: string): SseFrame | null {
   };
 }
 
-/** Streams one assistant reply token-by-token from POST /conversations/{id}/messages. `onDone`
- * is called once the stream ends (success, error, or a client-side Stop) so the caller can
- * re-fetch the authoritative persisted messages -- the backend persists the complete (or
- * partial, if stopped) assistant reply itself once its own generator finishes. */
+/** Streams one assistant reply token-by-token from POST /conversations/{id}/messages -- its
+ * reasoning (`thinking` events, when an effort other than "off" is sent) into streamingThinking,
+ * then the reply itself (`token` events) into streamingText. `onDone` is called once the stream
+ * ends (success, error, or a client-side Stop) so the caller can re-fetch the authoritative
+ * persisted messages -- the backend persists the complete (or partial, if stopped) assistant
+ * reply itself once its own generator finishes. */
 export function useChatStream(conversationId: string, onDone: () => void): UseChatStreamResult {
   const [streamingText, setStreamingText] = useState("");
+  const [streamingThinking, setStreamingThinking] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, effort: Effort = "off") => {
       setError(null);
       setStreamingText("");
+      setStreamingThinking("");
       setIsStreaming(true);
       const controller = new AbortController();
       abortRef.current = controller;
@@ -51,7 +57,7 @@ export function useChatStream(conversationId: string, onDone: () => void): UseCh
         const response = await fetch(buildSendMessageUrl(conversationId), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, effort }),
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {
@@ -71,7 +77,9 @@ export function useChatStream(conversationId: string, onDone: () => void): UseCh
           while (boundary !== -1) {
             const frame = parseSseFrame(buffer.slice(0, boundary));
             buffer = buffer.slice(boundary + 2);
-            if (frame?.event === "token" && frame.data.text) {
+            if (frame?.event === "thinking" && frame.data.text) {
+              setStreamingThinking((prev) => prev + frame.data.text);
+            } else if (frame?.event === "token" && frame.data.text) {
               setStreamingText((prev) => prev + frame.data.text);
             } else if (frame?.event === "error" && frame.data.message) {
               setError(frame.data.message);
@@ -99,5 +107,5 @@ export function useChatStream(conversationId: string, onDone: () => void): UseCh
     abortRef.current?.abort();
   }, []);
 
-  return { streamingText, isStreaming, error, sendMessage, stop };
+  return { streamingText, streamingThinking, isStreaming, error, sendMessage, stop };
 }

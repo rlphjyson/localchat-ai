@@ -19,4 +19,23 @@ describe("MessageBubble", () => {
     expect(screen.getByText("foo()")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
   });
+
+  it("shows no reasoning block for a reply without reasoning", () => {
+    render(<MessageBubble role="assistant" content="hi" />);
+    expect(screen.queryByText("Reasoning")).not.toBeInTheDocument();
+  });
+
+  it("expands live reasoning while thinking, then collapses it once the reply starts", () => {
+    const { rerender } = render(
+      <MessageBubble role="assistant" content="" thinking="Working it out" isThinking={true} />,
+    );
+    expect(screen.getByText("Thinking...")).toBeInTheDocument();
+    expect(screen.getByText("Working it out").closest("details")).toHaveAttribute("open");
+
+    rerender(<MessageBubble role="assistant" content="Done" thinking="Working it out" isThinking={false} />);
+    expect(screen.getByText("Reasoning")).toBeInTheDocument();
+    expect(screen.getByText("Working it out").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Done")).toBeInTheDocument();
+  });
 });
+

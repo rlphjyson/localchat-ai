@@ -7,17 +7,23 @@ import { MessageBubble } from "@/components/MessageBubble";
 interface ChatThreadProps {
   messages: Message[];
   streamingText: string;
+  streamingThinking?: string;
   isStreaming: boolean;
 }
 
-export function ChatThread({ messages, streamingText, isStreaming }: ChatThreadProps) {
+export function ChatThread({
+  messages,
+  streamingText,
+  streamingThinking = "",
+  isStreaming,
+}: ChatThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // Optional chaining on the method itself, not just the ref: jsdom (the test environment)
     // doesn't implement scrollIntoView at all.
     bottomRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" });
-  }, [messages.length, streamingText]);
+  }, [messages.length, streamingText, streamingThinking]);
 
   if (messages.length === 0 && !isStreaming) {
     return <p className="text-sm text-muted-foreground">Ask me anything to get started.</p>;
@@ -26,9 +32,23 @@ export function ChatThread({ messages, streamingText, isStreaming }: ChatThreadP
   return (
     <div className="space-y-3">
       {messages.map((message) => (
-        <MessageBubble key={message.id} role={message.role} content={message.content} />
+        <MessageBubble
+          key={message.id}
+          role={message.role}
+          content={message.content}
+          thinking={message.thinking}
+        />
       ))}
-      {isStreaming && <MessageBubble role="assistant" content={streamingText || "..."} />}
+      {isStreaming && (
+        <MessageBubble
+          role="assistant"
+          // The "..." placeholder only until the first event -- once reasoning arrives, its own
+          // "Thinking..." block is the progress indicator.
+          content={streamingText || (streamingThinking ? "" : "...")}
+          thinking={streamingThinking}
+          isThinking={!streamingText}
+        />
+      )}
       <div ref={bottomRef} />
     </div>
   );

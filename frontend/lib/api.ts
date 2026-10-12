@@ -13,7 +13,17 @@ export interface Message {
   conversation_id: string;
   role: "user" | "assistant";
   content: string;
+  /** The model's reasoning before this reply -- empty unless it was generated with reasoning on. */
+  thinking: string;
   created_at: string;
+}
+
+export interface ModelInfo {
+  name: string;
+  /** Whether a reasoning effort can be sent for this model -- Ollama rejects one otherwise. */
+  supports_thinking: boolean;
+  /** The backend's configured default, i.e. what "Default model" resolves to. */
+  is_default: boolean;
 }
 
 export class ApiError extends Error {
@@ -50,6 +60,10 @@ export function listConversations(): Promise<Conversation[]> {
   return request("/conversations");
 }
 
+export function getConversation(conversationId: string): Promise<Conversation> {
+  return request(`/conversations/${conversationId}`);
+}
+
 export function getMessages(conversationId: string): Promise<Message[]> {
   return request(`/conversations/${conversationId}/messages`);
 }
@@ -58,7 +72,7 @@ export function deleteConversation(conversationId: string): Promise<void> {
   return request(`/conversations/${conversationId}`, { method: "DELETE" });
 }
 
-export function listModels(): Promise<string[]> {
+export function listModels(): Promise<ModelInfo[]> {
   return request("/models");
 }
 

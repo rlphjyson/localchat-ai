@@ -90,3 +90,79 @@ async def test_full_response_is_persisted_on_normal_completion(
     messages = session.exec(select(Message).where(Message.conversation_id == conversation.id)).all()
     assert len(messages) == 1
     assert messages[0].content == "Hi!"
+
+
+async def test_thinking_is_streamed_before_the_reply_and_persisted_alongside_it(
+    session: Session, test_engine
+) -> None:
+    conversation = Conversation(model="qwen3.8:27b")
+    session.add(conversation)
+    session.commit()
+    session.refresh(conversation)
+
+    ollama = FakeOllamaClient(
+        chunks=[
+            ChatChunk(content="", thinking="Hmm, "),
+            ChatChunk(content="", thinking="easy."),
+            ChatChunk(content="4", done=True, eval_count=5, eval_duration=1_000_000_000),
+        ]
+    )
+
+    events = [
+        event
+        async for event in stream_chat_response(
+            conversation.id,
+            conversation.model,
+            [{"role": "user", "content": "2+2?"}],
+            ollama,
+            test_engine,
+            _NeverDisconnectedRequest(),  # type: ignore[arg-type]
+            "low",
+        )
+    ]
+
+    assert ollama.received_think == "low"
+    assert [e.split("\n", 1)[0] for e in events] == [
+        "event: thinking",
+        "event: thinking",
+        "event: token",
+        "event: done",
+    ]
+    messages = session.exec(select(Message).where(Message.conversation_id == conversation.id)).all()
+    assert len(messages) == 1
+    assert messages[0].thinking == "Hmm, easy."
+    assert messages[0].content == "4"
+
+
+async def test_reasoning_is_persisted_when_stopped_before_any_reply_content(
+    session: Session, test_engine
+) -> None:
+    conversation = Conversation(model="qwen3.8:27b")
+    session.add(conversation)
+    session.commit()
+    session.refresh(conversation)
+
+    ollama = FakeOllamaClient(
+        chunks=[
+            ChatChunk(content="", thinking="First, "),
+            ChatChunk(content="", thinking="consider..."),
+            ChatChunk(content="Answer"),
+        ]
+    )
+
+    generator = stream_chat_response(
+        conversation.id,
+        conversation.model,
+        [{"role": "user", "content": "hard question"}],
+        ollama,
+        test_engine,
+        _NeverDisconnectedRequest(),  # type: ignore[arg-type]
+        "high",
+    )
+    await generator.__anext__()  # "First, "
+    await generator.aclose()  # Stop while still reasoning
+
+    messages = session.exec(select(Message).where(Message.conversation_id == conversation.id)).all()
+    assert len(messages) == 1
+    assert messages[0].thinking == "First, "
+    assert messages[0].content == ""

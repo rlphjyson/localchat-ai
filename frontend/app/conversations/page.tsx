@@ -3,8 +3,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Send } from "lucide-react";
-import { createConversation, listModels } from "@/lib/api";
+import { createConversation, listModels, type ModelInfo } from "@/lib/api";
+import { useEffort } from "@/lib/effort";
 import { Button } from "@/components/ui/button";
+import { EffortSelect } from "@/components/EffortSelect";
 
 // A fresh conversation is created empty, then the first message is stashed here (keyed by the
 // new conversation's id) so the detail page can send it once mounted -- simpler than threading a
@@ -15,10 +17,16 @@ export function pendingMessageKey(conversationId: string): string {
 
 export default function NewConversationPage() {
   const router = useRouter();
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [prompt, setPrompt] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Only shown here, not sent -- the conversation page reads the same remembered effort when it
+  // sends this first message.
+  const [effort, setEffort] = useEffort();
+  const resolvedModel = selectedModel
+    ? models.find((model) => model.name === selectedModel)
+    : models.find((model) => model.is_default);
 
   useEffect(() => {
     listModels()
@@ -47,12 +55,13 @@ export default function NewConversationPage() {
           >
             <option value="">Default model</option>
             {models.map((model) => (
-              <option key={model} value={model}>
-                {model}
+              <option key={model.name} value={model.name}>
+                {model.name}
               </option>
             ))}
           </select>
         )}
+        {resolvedModel?.supports_thinking && <EffortSelect value={effort} onChange={setEffort} />}
         <textarea
           autoFocus
           rows={3}

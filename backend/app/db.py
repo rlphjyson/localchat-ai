@@ -2,7 +2,7 @@ import os
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
@@ -39,6 +39,19 @@ engine = create_engine(settings.database_url, connect_args=connect_args)
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """create_all() only creates missing tables -- it never alters an existing one, so a database
+    created before a column was added would fail on every query touching it. No Alembic for a
+    single-user local app; columns added since the first release are backfilled here instead."""
+    existing = {column["name"] for column in inspect(engine).get_columns("message")}
+    if "thinking" not in existing:
+        with engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE message ADD COLUMN thinking VARCHAR NOT NULL DEFAULT ''")
+            )
 
 
 def get_engine() -> Engine:

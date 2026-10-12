@@ -1,7 +1,8 @@
 "use client";
 
 import { use, useCallback, useEffect, useRef, useState } from "react";
-import { getMessages, type Message } from "@/lib/api";
+import { getConversation, getMessages, listModels, type Message } from "@/lib/api";
+import { useEffort } from "@/lib/effort";
 import { useChatStream } from "@/lib/useChatStream";
 import { ChatThread } from "@/components/ChatThread";
 import { ChatComposer } from "@/components/ChatComposer";
@@ -18,22 +19,41 @@ export default function ConversationPage({ params }: PageProps<"/conversations/[
   const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null);
   const loaded = loadedConversationId === conversationId;
   const hasSentPending = useRef(false);
+  const [supportsThinking, setSupportsThinking] = useState(false);
+  const [effort, setEffort] = useEffort();
 
   const refreshMessages = useCallback(async () => {
     setMessages(await getMessages(conversationId));
   }, [conversationId]);
 
-  const { streamingText, isStreaming, error, sendMessage, stop } = useChatStream(
-    conversationId,
-    refreshMessages,
-  );
+  const { streamingText, streamingThinking, isStreaming, error, sendMessage, stop } =
+    useChatStream(conversationId, refreshMessages);
 
   useEffect(() => {
     hasSentPending.current = false;
-    getMessages(conversationId).then((fetched) => {
+    // A superseded run's results are dropped: in dev, Strict Mode runs this effect twice, and the
+    // first run resolving lets the pending first message below be sent -- the second run's
+    // pre-send message list then landed afterwards, wiping the just-added user message from view
+    // until the whole reply finished streaming.
+    let cancelled = false;
+    // Model capabilities load alongside the messages, not after them -- the pending first message
+    // below is sent the moment `loaded` flips, and needs to know whether to send an effort.
+    // Ollama being unreachable just means no effort picker, not a page that never loads.
+    Promise.all([
+      getMessages(conversationId),
+      getConversation(conversationId),
+      listModels().catch(() => []),
+    ]).then(([fetched, conversation, models]) => {
+      if (cancelled) return;
       setMessages(fetched);
+      setSupportsThinking(
+        models.some((model) => model.name === conversation.model && model.supports_thinking),
+      );
       setLoadedConversationId(conversationId);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [conversationId]);
 
   // Adds the just-sent user message immediately, rather than waiting for the whole assistant
@@ -43,9 +63,16 @@ export default function ConversationPage({ params }: PageProps<"/conversations/[
   function handleSend(content: string) {
     setMessages((prev) => [
       ...prev,
-      { id: -Date.now(), conversation_id: conversationId, role: "user", content, created_at: new Date().toISOString() },
+      {
+        id: -Date.now(),
+        conversation_id: conversationId,
+        role: "user",
+        content,
+        thinking: "",
+        created_at: new Date().toISOString(),
+      },
     ]);
-    sendMessage(content);
+    sendMessage(content, supportsThinking ? effort : "off");
   }
 
   useEffect(() => {
@@ -69,10 +96,21 @@ export default function ConversationPage({ params }: PageProps<"/conversations/[
   return (
     <main className="mx-auto flex h-full w-full max-w-3xl flex-col gap-4 px-6 py-8">
       <div className="flex-1 overflow-y-auto">
-        <ChatThread messages={messages} streamingText={streamingText} isStreaming={isStreaming} />
+        <ChatThread
+          messages={messages}
+          streamingText={streamingText}
+          streamingThinking={streamingThinking}
+          isStreaming={isStreaming}
+        />
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </div>
-      <ChatComposer isStreaming={isStreaming} onSend={handleSend} onStop={stop} />
+      <ChatComposer
+        isStreaming={isStreaming}
+        onSend={handleSend}
+        onStop={stop}
+        effort={supportsThinking ? effort : undefined}
+        onEffortChange={supportsThinking ? setEffort : undefined}
+      />
     </main>
   );
 }

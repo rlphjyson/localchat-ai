@@ -85,4 +85,36 @@ describe("useChatStream", () => {
     expect(result.current.error).toBeNull();
     expect(result.current.isStreaming).toBe(false);
   });
+
+  it("accumulates thinking events separately from the reply and sends the chosen effort", async () => {
+    const body = sseStream([
+      `event: thinking\ndata: ${JSON.stringify({ text: "Let me " })}\n\n`,
+      `event: thinking\ndata: ${JSON.stringify({ text: "think." })}\n\n`,
+      `event: token\ndata: ${JSON.stringify({ text: "42" })}\n\n`,
+      `event: done\ndata: ${JSON.stringify({ tokens_per_second: null })}\n\n`,
+    ]);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useChatStream("conv-1", vi.fn()));
+    await act(async () => {
+      await result.current.sendMessage("hi", "high");
+    });
+
+    expect(result.current.streamingThinking).toBe("Let me think.");
+    expect(result.current.streamingText).toBe("42");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ content: "hi", effort: "high" });
+  });
+
+  it("sends effort off when none is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(sseStream([]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useChatStream("conv-1", vi.fn()));
+    await act(async () => {
+      await result.current.sendMessage("hi");
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).effort).toBe("off");
+  });
 });

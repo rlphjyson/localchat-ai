@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, type ComponentPropsWithoutRef } from "react";
+import { useEffect, useRef, useState, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Check, Copy } from "lucide-react";
+import { Brain, Check, ChevronRight, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function CodeBlock({ className, children }: ComponentPropsWithoutRef<"code">) {
@@ -67,12 +67,43 @@ const MARKDOWN_COMPONENTS = {
   ),
 };
 
+/** Expanded while the model is still reasoning, then collapses as soon as the reply starts --
+ * `open` only changes the DOM when the prop itself flips, so the user can still toggle it freely
+ * afterwards. */
+function ReasoningBlock({ thinking, isThinking }: { thinking: string; isThinking: boolean }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Follow the live reasoning, which otherwise grows out of view below the capped height.
+    if (isThinking && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+  }, [thinking, isThinking]);
+
+  return (
+    <details open={isThinking} className="group mb-2 rounded-md border bg-background/50 text-xs last:mb-0">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1.5 text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
+        <Brain className="size-3.5" />
+        {isThinking ? <span className="animate-pulse">Thinking...</span> : "Reasoning"}
+      </summary>
+      <div
+        ref={bodyRef}
+        className="max-h-72 overflow-y-auto border-t px-3 py-2 whitespace-pre-wrap text-muted-foreground"
+      >
+        {thinking}
+      </div>
+    </details>
+  );
+}
+
 interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
+  thinking?: string;
+  /** True while reasoning is still streaming in, before any of the reply itself. */
+  isThinking?: boolean;
 }
 
-export function MessageBubble({ role, content }: MessageBubbleProps) {
+export function MessageBubble({ role, content, thinking = "", isThinking = false }: MessageBubbleProps) {
   const isUser = role === "user";
   return (
     <div
@@ -81,9 +112,12 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
         isUser ? "ml-auto bg-primary/10" : "bg-muted/60",
       )}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-        {content}
-      </ReactMarkdown>
+      {thinking && <ReasoningBlock thinking={thinking} isThinking={isThinking} />}
+      {content && (
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+          {content}
+        </ReactMarkdown>
+      )}
     </div>
   );
 }

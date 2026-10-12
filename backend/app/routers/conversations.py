@@ -15,7 +15,7 @@ from app.schemas import (
     SendMessageRequest,
 )
 from app.services.chat_stream import SYSTEM_PROMPT, stream_chat_response
-from app.services.ollama_client import OllamaClient, get_ollama_client
+from app.services.ollama_client import OllamaClient, Think, get_ollama_client
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -37,6 +37,7 @@ def _to_message_response(message: Message) -> MessageResponse:
         conversation_id=message.conversation_id,
         role=message.role,
         content=message.content,
+        thinking=message.thinking,
         created_at=message.created_at,
     )
 
@@ -65,6 +66,13 @@ def list_conversations(session: Session = Depends(get_session)) -> list[Conversa
         select(Conversation).order_by(Conversation.updated_at.desc())  # type: ignore[attr-defined]
     ).all()
     return [_to_conversation_response(c) for c in conversations]
+
+
+@router.get("/{conversation_id}", response_model=ConversationResponse)
+def get_conversation(
+    conversation_id: str, session: Session = Depends(get_session)
+) -> ConversationResponse:
+    return _to_conversation_response(_get_conversation_or_404(conversation_id, session))
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
@@ -113,10 +121,15 @@ def send_message(
     session.commit()
 
     history = [{"role": "system", "content": SYSTEM_PROMPT}]
-    history += [{"role": m.role, "content": m.content} for m in prior_messages]
+    # Only replies, never their reasoning, go back to the model (Qwen's own guidance for multi-
+    # turn chat) -- and a reply stopped mid-reasoning, before any content, is left out entirely.
+    history += [{"role": m.role, "content": m.content} for m in prior_messages if m.content]
     history.append({"role": "user", "content": payload.content})
 
+    think: Think = False if payload.effort == "off" else payload.effort
     return StreamingResponse(
-        stream_chat_response(conversation_id, conversation.model, history, ollama, engine, request),
+        stream_chat_response(
+            conversation_id, conversation.model, history, ollama, engine, request, think
+        ),
         media_type="text/event-stream",
     )

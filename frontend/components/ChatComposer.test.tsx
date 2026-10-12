@@ -55,4 +55,29 @@ describe("ChatComposer", () => {
     await user.type(textarea, "{Enter}");
     expect(onSend).toHaveBeenCalledWith("line one\nline two");
   });
+
+  it("hides the reasoning effort picker when no effort is given", () => {
+    render(<ChatComposer isStreaming={false} onSend={vi.fn()} onStop={vi.fn()} />);
+    expect(screen.queryByRole("combobox", { name: /reasoning effort/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the reasoning effort picker and reports a new choice", async () => {
+    const onEffortChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ChatComposer
+        isStreaming={false}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        effort="low"
+        onEffortChange={onEffortChange}
+      />,
+    );
+    const picker = screen.getByRole("combobox", { name: /reasoning effort/i });
+    expect(picker).toHaveValue("low");
+
+    await user.selectOptions(picker, "High");
+    expect(onEffortChange).toHaveBeenCalledWith("high");
+  });
 });
+

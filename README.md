@@ -52,12 +52,23 @@ flowchart LR
    picked, or the configured default) and returns immediately.
 2. **Send a message** — `POST /conversations/{id}/messages` persists the user's message, builds
    the full prior history + a system prompt, and opens a streaming request to Ollama's native
-   `/api/chat` endpoint.
-3. **Stream back** — each token Ollama produces is relayed to the browser as an SSE `token` event
-   as it arrives; a final `done` event carries Ollama's own tokens/sec stat.
+   `/api/chat` endpoint, with the chosen reasoning effort as Ollama's `think` value.
+3. **Stream back** — with reasoning on, the model's thinking is relayed first as SSE `thinking`
+   events (shown live in a "Thinking..." block that collapses once the answer starts), then each
+   reply token as a `token` event; a final `done` event carries Ollama's own tokens/sec stat.
 4. **Persist** — once the stream ends (naturally, on error, or because the user hit Stop), the
-   complete — or partial — assistant reply is saved, so a stopped generation is never silently
-   lost.
+   complete — or partial — assistant reply is saved along with its reasoning, so a stopped
+   generation is never silently lost. Only replies, never reasoning, go back to the model as
+   history on later turns.
+
+### Reasoning effort
+
+For models Ollama reports as thinking-capable, a **Reasoning** picker sits under the message box:
+Off / Low / Medium / High (remembered across chats, default Low). Qwen3.8 turns Low and High into
+"keep it brief" / "think carefully" instructions; Medium is its normal reasoning. On an RTX 3060
+the wait before the answer starts is roughly ~3s Off, ~45s Low, ~55s Medium and ~90s High for a
+short two-part question — longer for harder ones. Models without thinking support never show the
+picker, since Ollama rejects an effort level for them.
 
 ## A real bug worth calling out
 
@@ -74,7 +85,7 @@ the generator exits.
 | Layer | Choice | Why |
 | --- | --- | --- |
 | Model serving | [Ollama](https://ollama.com) | Simplest reliable way to run a quantized GGUF model locally on Windows, with a clean REST API and per-model tool-calling/context metadata already worked out. |
-| Model | Qwen2.5-Coder-7B-Instruct (default) | Strong at both general chat and code for its size; comfortably fits an RTX 3060's VRAM quantized (Q4_K_M, ~4.7GB). Swappable per-conversation — see below. |
+| Model | Qwen3.8-27B (default) | Newest Qwen generation, strong at both general chat and code. Quantized (Q4_K_M, ~17GB) it doesn't fit an RTX 3060's 12GB VRAM alone, so Ollama splits it roughly half GPU / half system RAM — ~7-8 tokens/sec, needs ~32GB RAM. Its reasoning is shown in the UI, with selectable effort (see above). Swappable per-conversation — see below. |
 | Backend | FastAPI + SQLModel | Same pattern as the rest of the series. |
 | Streaming | Server-Sent Events over a plain `fetch()` | No auth, single active generation per conversation — simpler than the WebSocket relay agent-ops-dashboard needed for its multi-run fleet view. |
 | Frontend | Next.js App Router + TS + Tailwind + shadcn | Matches the series. Markdown + syntax-highlighted code blocks via `react-markdown`/`react-syntax-highlighter`. |
@@ -88,12 +99,15 @@ the generator exits.
 [Install Ollama](https://ollama.com/download) for your platform, then:
 
 ```bash
-ollama pull qwen2.5-coder:7b
+ollama pull qwen3.8:27b
 ```
 
 Any model you pull shows up automatically in the app's model picker — no code changes needed.
-Some other models worth trying on similar hardware: `llama3.1:8b` (general chat, tool-calling),
-`deepseek-r1:8b` (visible chain-of-thought reasoning), `llama3.2:3b` (fast/lightweight).
+Some other models worth trying on similar hardware: `qwen3.6:35b-a3b` (mixture-of-experts,
+~24GB — much faster since only 3B of its parameters are active per token, somewhat weaker),
+`gemma4:31b` (~20GB). With less system RAM, `qwen3.5:9b` or `gemma4:12b` (~7-8GB) fit entirely
+in 12GB of VRAM. Ollama unloads a model after 5 idle minutes, so the next message waits ~50-65s
+while the default model is read back into memory.
 
 By default Ollama stores models under your user profile. To use a different drive (e.g. if `C:`
 is short on space), set `OLLAMA_MODELS` to another directory before pulling.
@@ -138,7 +152,7 @@ npm start
 - Frontend: Vitest + Testing Library, including a hand-rolled SSE stream (a real `ReadableStream`
   feeding hand-written frames) driving `useChatStream` through token accumulation, an error
   event, and an aborted (Stop) request, without needing a real backend.
-- 62 tests total (22 backend, 20 frontend), all green, ruff/mypy/eslint/tsc/build clean on both
+- 65 tests total (33 backend, 32 frontend), all green, ruff/mypy/eslint/tsc/build clean on both
   sides.
 - Live-verified manually against a real Ollama instance: streaming responses, multi-turn context
   retention across turns, conversation delete, and the Stop-mid-stream fix above.
@@ -150,7 +164,7 @@ This is built for local, single-user use, not a hosted deployment:
 - **No auth.** Anyone with access to the machine (or the port, if exposed) can use it.
 - **Single active generation assumed per conversation.** No queueing or concurrency control if
   multiple requests hit the same conversation at once.
-- **Model quality is a real tradeoff.** A quantized 7-8B local model is not Claude — it's a
+- **Model quality is a real tradeoff.** A quantized 27B local model is not Claude — it's a
   genuinely different point on the cost/quality curve, not a drop-in replacement for the other
   projects in this series (which is why this one is intentionally standalone).
 

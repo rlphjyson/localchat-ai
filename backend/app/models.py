@@ -25,4 +25,5 @@ class Message(SQLModel, table=True):
     conversation_id: str = Field(foreign_key="conversation.id", index=True)
     role: str  # "user" | "assistant"
     content: str
+    thinking: str = ""  # the model's reasoning, for assistant replies generated with it on
     created_at: datetime = Field(default_factory=_now)

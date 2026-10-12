@@ -9,7 +9,7 @@ from sqlalchemy import Engine
 from sqlmodel import Session
 
 from app.models import Conversation, Message
-from app.services.ollama_client import OllamaClient
+from app.services.ollama_client import OllamaClient, Think
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,12 @@ async def stream_chat_response(
     ollama: OllamaClient,
     engine: Engine,
     request: Request,
+    think: Think = False,
 ) -> AsyncIterator[str]:
-    """Streams the assistant's reply as SSE token events, then persists the complete (or partial,
-    if stopped) response in its own Session (the request-scoped one is long gone by the time this
-    generator is actually driven -- same "background work opens its own Session" idiom used
-    throughout this series).
+    """Streams the assistant's reply as SSE token events (preceded by thinking events when
+    reasoning is on), then persists the complete (or partial, if stopped) response in its own
+    Session (the request-scoped one is long gone by the time this generator is actually driven --
+    same "background work opens its own Session" idiom used throughout this series).
 
     A real, live-caught bug: checking request.is_disconnected() between chunks is not enough on
     its own. When a client aborts the fetch (the Stop button), the ASGI server cancels this
@@ -47,13 +48,17 @@ async def stream_chat_response(
     how this generator exits -- normal completion, the httpx-error path below, or a bare
     cancellation from the client disconnecting."""
     full_text: list[str] = []
+    full_thinking: list[str] = []
     tokens_per_second: float | None = None
 
     try:
         try:
-            async for chunk in ollama.stream_chat(model, history):
+            async for chunk in ollama.stream_chat(model, history, think):
                 if await request.is_disconnected():
                     break
+                if chunk.thinking:
+                    full_thinking.append(chunk.thinking)
+                    yield sse_event("thinking", {"text": chunk.thinking})
                 if chunk.content:
                     full_text.append(chunk.content)
                     yield sse_event("token", {"text": chunk.content})
@@ -67,10 +72,17 @@ async def stream_chat_response(
         yield sse_event("done", {"tokens_per_second": tokens_per_second})
     finally:
         assistant_text = "".join(full_text)
-        if assistant_text:
+        thinking_text = "".join(full_thinking)
+        # Reasoning alone is still kept -- Stop during a long think shouldn't discard minutes of it.
+        if assistant_text or thinking_text:
             with Session(engine) as session:
                 session.add(
-                    Message(conversation_id=conversation_id, role="assistant", content=assistant_text)
+                    Message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content=assistant_text,
+                        thinking=thinking_text,
+                    )
                 )
                 conversation = session.get(Conversation, conversation_id)
                 if conversation is not None:

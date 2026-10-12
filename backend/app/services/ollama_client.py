@@ -1,11 +1,17 @@
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 
 from app.config import get_settings
+
+# Ollama's `think` request field. False disables reasoning; a level enables it at that effort --
+# Qwen3.8's renderer adds a "keep it brief" / "think carefully" instruction for low / high, and
+# gpt-oss maps it to its native reasoning effort. Left unset, Ollama turns reasoning *on*
+# (at Qwen3.8's highest effort), so this app always sends it explicitly.
+Think = bool | Literal["low", "medium", "high"]
 
 
 @dataclass
@@ -14,14 +20,21 @@ class ChatChunk:
     done: bool = False
     eval_count: int | None = None
     eval_duration: int | None = None
+    thinking: str = ""
+
+
+@dataclass
+class ModelInfo:
+    name: str
+    supports_thinking: bool = False
 
 
 class OllamaClient(Protocol):
     def stream_chat(
-        self, model: str, messages: list[dict[str, str]]
+        self, model: str, messages: list[dict[str, str]], think: Think = False
     ) -> AsyncIterator[ChatChunk]: ...
 
-    async def list_models(self) -> list[str]: ...
+    async def list_models(self) -> list[ModelInfo]: ...
 
     async def is_healthy(self) -> bool: ...
 
@@ -44,14 +57,16 @@ class RealOllamaClient:
         self._transport = transport
 
     async def stream_chat(
-        self, model: str, messages: list[dict[str, str]]
+        self, model: str, messages: list[dict[str, str]], think: Think = False
     ) -> AsyncIterator[ChatChunk]:
         async with httpx.AsyncClient(
             timeout=self._timeout, transport=self._transport
         ) as client, client.stream(
             "POST",
             f"{self._base_url}/api/chat",
-            json={"model": model, "messages": messages, "stream": True},
+            # think=False is ignored by models without thinking support, but any level is a 400
+            # for them -- callers only pass a level for models list_models() flags as capable.
+            json={"model": model, "messages": messages, "stream": True, "think": think},
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -64,13 +79,22 @@ class RealOllamaClient:
                     done=obj.get("done", False),
                     eval_count=obj.get("eval_count"),
                     eval_duration=obj.get("eval_duration"),
+                    thinking=message.get("thinking", ""),
                 )
 
-    async def list_models(self) -> list[str]:
+    async def list_models(self) -> list[ModelInfo]:
         async with httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client:
             response = await client.get(f"{self._base_url}/api/tags")
             response.raise_for_status()
-            return [m["name"] for m in response.json().get("models", [])]
+            return [
+                ModelInfo(
+                    name=m["name"],
+                    # Older Ollama versions omit `capabilities` from /api/tags -- treated as
+                    # non-thinking, which just hides the effort picker for that model.
+                    supports_thinking="thinking" in (m.get("capabilities") or []),
+                )
+                for m in response.json().get("models", [])
+            ]
 
     async def is_healthy(self) -> bool:
         try:
